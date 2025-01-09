@@ -1,0 +1,94 @@
+/*
+* Eva Grammar (S -expression)
+* syntax-cli -g src/parser/EvaGrammar.bnf -m LALR1 -o src/parer/EvaParser.h
+* Example:
+*/
+
+//--------------------------------------
+// Lexical Grammar (Token):
+
+%lex
+
+%%
+\/\/.*              %empty
+\/\*[\s\S]*?\*\/    %empty
+
+\s+                 %empty
+
+\"[^\"]*\"          STRING
+
+\d+                 NUMBER
+
+[\w\-+*=!<>/]+     SYMBOL
+
+/lex
+
+//--------------------------------------
+// Syntactic Grammar (BNF):
+// expression type
+%{
+#include <string>
+#include <vector>
+
+enum class ExpType{
+    NUMBER,
+    STRING,
+    SYMBOL,
+    LIST
+};
+
+// expression
+struct Exp {
+    ExpType type;
+
+    int number;
+    std::string string;
+    std::vector<Exp> list;
+
+    // Number constructor
+    Exp(int number) : type(ExpType::NUMBER), number(number){}
+
+    // String and SYMBOL
+    Exp(std::string &strVal)
+    {
+        if (strVal[0] == '"')
+        {
+            type = ExpType::STRING;
+            string = strVal.substr(1, strVal.size()-2);
+        }
+        else
+        {
+            type = ExpType::SYMBOL;
+            string = strVal;
+        }
+    }
+
+    // List:
+    Exp(std::vector<Exp> list) : type(ExpType::LIST), list(list) {}
+};
+
+using Value = Exp;
+
+%}
+
+%% 
+
+Exp 
+    : Atom
+    | List
+    ;
+
+Atom
+    : NUMBER { $$ = Exp(std::stoi($1)) }
+    | STRING { $$ = Exp($1) }
+    | SYMBOL { $$ = Exp($1) }
+    ;
+
+List
+    : '(' ListEntries ')' { $$ = $2 }
+    ;
+
+ListEntries
+    : %empty { $$ = Exp(std::vector<Exp>{}) }
+    | ListEntries Exp {$1.list.push_back($2); $$ = $1 }
+    ;
