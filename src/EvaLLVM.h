@@ -4,6 +4,7 @@
 #include <llvm-14/llvm/BinaryFormat/Dwarf.h>
 #include <llvm-14/llvm/IR/Constant.h>
 #include <llvm-14/llvm/IR/Constants.h>
+#include <llvm-14/llvm/IR/Instructions.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
@@ -338,23 +339,92 @@ private:
 
                         auto address = builder->CreateStructGEP(cls, instance, fieldIdx, ptrName);
                         return builder->CreateLoad(cls->getElementType(fieldIdx), address, fieldName);
+                    }
+                    // (method <instance> <name>)
+                    // (method (super <class>) <name>)
+                    else if (op == "method") {
+                        auto methodName = exp.list[2].string;
+
+                        llvm::StructType *cls = nullptr;
+                        llvm::Value *vTable = nullptr;
+                        llvm::StructType *vTableType = nullptr;
+
+                        if (isSuper(exp.list[1])) {
+                            auto className = exp.list[1].list[1].string;
+                            cls = classMap_[className].parent;
+                            auto parentName = std::string(cls->getName().data());
+
+                            vTable = module->getNamedGlobal(parentName + "_vTable");
+                            vTableType = llvm::StructType::getTypeByName(*ctx, parentName + "_vTable");
+                        } else {
+                            // just instance
+                            auto instance = gen(exp.list[1], env);
+                            cls = (llvm::StructType *) (instance->getType()->getContainedType(0));
+
+                            // load vtable
+                            auto vTableAddr = builder->CreateStructGEP(cls, instance, VTABLE_INDEX);
+                            vTable = builder->CreateLoad(cls->getElementType(VTABLE_INDEX), vTableAddr, "vtable");
+                            vTableType = (llvm::StructType *) (vTable->getType()->getContainedType(0));
+                        }
+                        // load methods from vtable
+                        auto methodIdx = getMethodIndex(vTableType, methodName);
+                        auto methodType = (llvm::FunctionType *) vTableType->getElementType(methodIdx);
+                        auto methodAddr = builder->CreateStructGEP(vTableType, vTable, methodIdx);
+                        return builder->CreateLoad(methodType, methodAddr);
+
                     } else {
                         // fuction call
                         auto callable = gen(exp.list[0], env);
-
+                        auto fn = (llvm::Function *) callable;
+                        auto argIndex = 0;
                         std::vector<llvm::Value *> args{};
                         for (int i = 1; i < exp.list.size(); i++) {
-                            args.push_back(gen(exp.list[i], env));
+                            auto argValue = gen(exp.list[i], env);
+                            auto paramType = fn->getArg(argIndex)->getType();
+                            auto bitCastArgVal = builder->CreateBitCast(argValue, paramType);
+                            args.push_back(bitCastArgVal);
                         }
 
-                        auto fn = (llvm::Function *) callable;
                         return builder->CreateCall(fn, args);
                     }
+                }
+                // not symbol
+                // method calls
+                // ((method p getX) 2)
+                else {
+                    auto loadedMethod = (llvm::LoadInst *) gen(exp.list[0], env);
+
+                    auto fnType = (llvm::FunctionType *) (loadedMethod->getPointerOperand()
+                                                              ->getType()
+                                                              ->getContainedType(0)
+                                                              ->getContainedType(0));
+
+                    std::vector<llvm::Value *> args{};
+                    for (int i = 1; i < exp.list.size(); i++) {
+                        auto argValue = gen(exp.list[i], env);
+                        // Need to cast parameter type to support polymorphism(sub class)
+                        // we should be able to pass Point3D instance for the type
+                        // of the parent class Point
+                        auto paramType = fnType->getParamType(i - 1);
+                        if (argValue->getType() != paramType) {
+                            auto bitCastArgVal = builder->CreateBitCast(argValue, paramType);
+                            args.push_back(bitCastArgVal);
+                        } else {
+                            args.push_back(argValue);
+                        }
+                    }
+                    return builder->CreateCall(fnType, loadedMethod, args);
                 }
             }
             default:// unreachable
                 return builder->getInt32(0);
         }
+    }
+
+    size_t getMethodIndex(llvm::StructType *cls, const std::string &methodName) {
+        auto methods = &classMap_[cls->getName().data()].methodsMap;
+        auto it = methods->find(methodName);
+        return std::distance(methods->begin(), it);
     }
 
     size_t getFieldIndex(llvm::StructType *cls, const std::string &fieldName) {
@@ -501,8 +571,17 @@ private:
         auto mallocPtr = builder->CreateCall(module->getFunction("GC_malloc"), typeSize, name);
 
         // void* -> Point*
-        auto ptr = builder->CreatePointerCast(mallocPtr, cls->getPointerTo());
-        return ptr;
+        auto instance = builder->CreatePointerCast(mallocPtr, cls->getPointerTo());
+
+        // set vtable
+        std::string className{cls->getName().data()};
+        auto vTableName = className + "_vTable";
+        auto vTableAddr = builder->CreateStructGEP(cls, instance, VTABLE_INDEX);
+        auto vTable = module->getNamedGlobal(vTableName);
+
+        builder->CreateStore(vTable, vTableAddr);
+
+        return instance;
     }
 
     // return size of type in bytes
@@ -602,6 +681,10 @@ private:
 
     bool isProp(const Exp &exp) {
         return isTaggedList(exp, "prop");
+    }
+
+    bool isSuper(const Exp &exp) {
+        return isTaggedList(exp, "super");
     }
 
     /*get type from string*/

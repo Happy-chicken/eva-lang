@@ -14,7 +14,7 @@ int main() {
                         ))
 
 
-                (def calc (self) 0)
+                (def calc (self) (print "calc in Point"))
 
             )
         )
@@ -29,16 +29,26 @@ int main() {
                         (set (prop self z) z)
                         ))
 
-                (def calc (self) 1)
+                (def calc (self) (print "calc in Point3D"))
             )
 
         )
 
+        (def check ((obj Point))
+            (begin
+                ((method obj calc)
+                    obj
+                )
+            )
+        )
+
         (var p1 (new Point 10 20))
         (var p2 (new Point3D 10 20 30))
-        (print "p1.x = %d" (prop p1 x))
-        (print "p2.x = %d" (prop p2 x))
-        (print "p2.z = %d" (prop p2 z))
+        (check p1)
+        (check p2)
+        // (print "p1.x = %d" (prop p1 x))
+        // (print "p2.x = %d" (prop p2 x))
+        // (print "p2.z = %d" (prop p2 z))
     )";// Not escaping a string
     eva.exec(program);
     return 0;
