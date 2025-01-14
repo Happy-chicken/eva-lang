@@ -1,6 +1,9 @@
 #ifndef EVALLVM_H
 #define EVALLVM_H
 #include <cstddef>
+#include <llvm-14/llvm/BinaryFormat/Dwarf.h>
+#include <llvm-14/llvm/IR/Constant.h>
+#include <llvm-14/llvm/IR/Constants.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
@@ -41,6 +44,9 @@ struct ClassInfo {
     std::map<std::string, llvm::Type *> fieldsMap;
     std::map<std::string, llvm::Function *> methodsMap;
 };
+
+static const size_t RESERVED_FILED_COUNT = 1;
+static const size_t VTABLE_INDEX = 0;
 
 class EvaLLVM {
 
@@ -241,13 +247,29 @@ private:
                     }
                     // variable update
                     else if (op == "set") {
-                        auto varName = exp.list[1].string;
-                        auto value = gen(exp.list[2], env);
-                        // variable
-                        auto varBinding = env->lookup(varName);
 
-                        builder->CreateStore(value, varBinding);
-                        return value;
+                        auto value = gen(exp.list[2], env);
+                        // (set (prop self x) x)
+                        if (isProp(exp.list[1])) {
+                            auto instance = gen(exp.list[1].list[1], env);
+                            auto fieldName = exp.list[2].string;
+                            auto ptrName = std::string("p") + fieldName;
+                            auto cls = (llvm::StructType *) (instance->getType()->getContainedType(0));
+                            // field index
+                            auto fieldIdx = getFieldIndex(cls, fieldName);
+
+                            auto address = builder->CreateStructGEP(cls, instance, fieldIdx, ptrName);
+                            builder->CreateStore(value, address);
+                            return value;
+                        } else {
+                            auto varName = exp.list[1].string;
+                            // variable
+                            auto varBinding = env->lookup(varName);
+
+                            builder->CreateStore(value, varBinding);
+                            return value;
+                        }
+
                     }
                     // Block: (begin <expression>)
                     else if (op == "begin") {
@@ -310,7 +332,6 @@ private:
                         auto fieldName = exp.list[2].string;
 
                         auto ptrName = std::string("p") + fieldName;
-                        llvm::errs() << "Instance type: " << *(instance->getType()) << "\n";
                         auto cls = (llvm::StructType *) (instance->getType()->getContainedType(0));
                         // field index
                         auto fieldIdx = getFieldIndex(cls, fieldName);
@@ -339,7 +360,7 @@ private:
     size_t getFieldIndex(llvm::StructType *cls, const std::string &fieldName) {
         auto fields = &classMap_[cls->getName().data()].fieldsMap;
         auto it = fields->find(fieldName);
-        return std::distance(fields->begin(), it);
+        return std::distance(fields->begin(), it) + RESERVED_FILED_COUNT;
     }
 
     llvm::Value *allocVar(const std::string &name, llvm::Type *type, Env env) {
@@ -490,6 +511,10 @@ private:
     }
     // inherit parent class field
     void inheritClass(llvm::StructType *cls, llvm::StructType *parent) {
+        auto parentClassInfo = &classMap_[parent->getName().data()];
+
+        // inherit the field and method
+        classMap_[cls->getName().data()] = {cls, parent, parentClassInfo->fieldsMap, parentClassInfo->methodsMap};
     }
 
     // build class info
@@ -523,7 +548,13 @@ private:
         std::string className{cls->getName().data()};
 
         auto classInfo = &classMap_[className];
-        auto clsFields = std::vector<llvm::Type *>{};
+
+        // allocate the vtable to set its type in the body
+        // the table itself is populated later in buildVTable
+        auto vTableName = className + "_vTable";
+        auto vTableType = llvm::StructType::create(*ctx, vTableName);
+
+        auto clsFields = std::vector<llvm::Type *>{vTableType->getPointerTo()};
         for (const auto &field: classInfo->fieldsMap) {
             clsFields.push_back(field.second);
         }
@@ -531,6 +562,26 @@ private:
         cls->setBody(clsFields, false);
 
         // methods
+        // TODO
+        buildVTable(cls, classInfo);
+    }
+
+    void buildVTable(llvm::StructType *cls, ClassInfo *classInfo) {
+        std::string className{cls->getName().data()};
+        auto vTableName = className + "_vTable";
+        auto vTableType = llvm::StructType::getTypeByName(*ctx, vTableName);
+
+        std::vector<llvm::Constant *> vTableMethods;
+        std::vector<llvm::Type *> vTableMethodTypes;
+
+        for (const auto &methodInfo: classInfo->methodsMap) {
+            vTableMethods.push_back(methodInfo.second);
+            vTableMethodTypes.push_back(methodInfo.second->getType());
+        }
+
+        vTableType->setBody(vTableMethodTypes);
+        auto vTableValue = llvm::ConstantStruct::get(vTableType, vTableMethods);
+        createGlobalVar(vTableName, vTableValue);
     }
 
     bool isTaggedList(const Exp &exp, const std::string &tag) {
@@ -547,6 +598,10 @@ private:
 
     bool isNew(const Exp &exp) {
         return isTaggedList(exp, "new");
+    }
+
+    bool isProp(const Exp &exp) {
+        return isTaggedList(exp, "prop");
     }
 
     /*get type from string*/

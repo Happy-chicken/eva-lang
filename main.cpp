@@ -9,7 +9,9 @@ int main() {
                 (var y 0)
                 (def constructor (self x y)
                     (begin
-                        0))
+                        (set (prop self x) x)
+                        (set (prop self y) y)
+                        ))
 
 
                 (def calc (self) 0)
@@ -17,8 +19,26 @@ int main() {
             )
         )
 
-        (var p (new Point 10 20))
-        (print "p.x = %d" (prop p x))
+        (class Point3D Point 
+            (begin 
+                (var z 0)
+                (def constructor (self x y z)
+                    (begin
+                        (set (prop self x) x)
+                        (set (prop self y) y)
+                        (set (prop self z) z)
+                        ))
+
+                (def calc (self) 1)
+            )
+
+        )
+
+        (var p1 (new Point 10 20))
+        (var p2 (new Point3D 10 20 30))
+        (print "p1.x = %d" (prop p1 x))
+        (print "p2.x = %d" (prop p2 x))
+        (print "p2.z = %d" (prop p2 z))
     )";// Not escaping a string
     eva.exec(program);
     return 0;

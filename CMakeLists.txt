@@ -3,12 +3,14 @@ cmake_minimum_required(VERSION 3.10)
 # Set the project name
 project(EvaLang)
 
+
+set(LLVM_DIR "/usr/lib/llvm-14/cmake")
 # Find LLVM package
 find_package(LLVM REQUIRED CONFIG)
 #Find the libgc
 find_library(GC_LIB gc REQUIRED)
 
-# Set the compiler to clang++-17
+# Set the compiler to clang++-14
 set(CMAKE_CXX_COMPILER "/usr/local/bin/clang++-17")
 
 # add include directories
@@ -38,23 +40,4 @@ target_link_libraries(EvaLang ${LLVM_LIBS})
 
 target_compile_options(EvaLang PRIVATE -fstandalone-debug)
 
-# 生成的 IR 文件（使用 .ll 文件）
-add_custom_command(
-    OUTPUT output.ll
-    COMMAND ${OUTPUT_EXECUTABLE} > output.ll
-    DEPENDS ${OUTPUT_EXECUTABLE}
-)
-
-# 添加目标：编译带 GC 的 IR
-add_custom_target(
-    compile_gc
-    COMMAND clang++ -O3 -I/usr/include/gc output.ll /usr/lib/x86_64-linux-gnu/libgc.a -o output
-    DEPENDS output.ll
-)
-
-# 打印执行结果
-add_custom_target(
-    run
-    COMMAND ./output  && printf "\\n"
-    DEPENDS compile_gc
-)
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} at ${LLVM_DIR}")
