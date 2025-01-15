@@ -367,18 +367,34 @@ private:
                             vTableType = (llvm::StructType *) (vTable->getType()->getContainedType(0));
                         }
                         // load methods from vtable
-                        auto methodIdx = getMethodIndex(vTableType, methodName);
+                        auto methodIdx = getMethodIndex(cls, methodName);
                         auto methodType = (llvm::FunctionType *) vTableType->getElementType(methodIdx);
                         auto methodAddr = builder->CreateStructGEP(vTableType, vTable, methodIdx);
                         return builder->CreateLoad(methodType, methodAddr);
 
                     } else {
                         // fuction call
-                        auto callable = gen(exp.list[0], env);
-                        auto fn = (llvm::Function *) callable;
-                        auto argIndex = 0;
+                        auto callee = gen(exp.list[0], env);
+
                         std::vector<llvm::Value *> args{};
-                        for (int i = 1; i < exp.list.size(); i++) {
+                        auto argIndex = 0;
+
+                        auto calleeType = callee->getType()->getContainedType(0);
+                        if (calleeType->isStructTy()) {
+                            // if it is a class
+                            auto cls = (llvm::StructType *) calleeType;
+                            std::string className{cls->getName().data()};
+
+                            // push self as the first argument
+                            args.push_back(callee);
+                            argIndex++;
+
+                            // TODO support polymorphism (inheritance)
+                            callee = module->getFunction(className + "___call__");// 3 _
+                        }
+                        auto fn = (llvm::Function *) callee;
+
+                        for (int i = 1; i < exp.list.size(); i++, argIndex++) {
                             auto argValue = gen(exp.list[i], env);
                             auto paramType = fn->getArg(argIndex)->getType();
                             auto bitCastArgVal = builder->CreateBitCast(argValue, paramType);
