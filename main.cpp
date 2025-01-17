@@ -1,4 +1,4 @@
-#include "src/EvaLLVM.h"
+#include "./include/EvaIRGener.h"
 
 int main() {
     EvaLLVM eva;
