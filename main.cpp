@@ -73,10 +73,20 @@ int main() {
         (var transform (new Transformer 5))
         (print "(transform 10) = %d\n" (transform 10))
         
-        // (def calculate (x (modify Transformer)) 
-        //     (modify x)
-        // )
-        // (print "(calculate 10 transform) = %d\n" (calculate 10 transform))
+        (def calculate (x (modify Transformer)) 
+            (modify x)
+        )
+        (print "(calculate 10 transform) = %d\n" (calculate 10 transform))
+
+        (list a (1 2 3))
+        (var b 2)
+        (while (>= b 1)
+            (begin
+                (print "a=%d\n" (get a b))
+                (set b (- b 1))
+            )
+        )
+        (print "a=%d\n" -1)
     )";// Not escaping a string
     eva.exec(program);
     return 0;

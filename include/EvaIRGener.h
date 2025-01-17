@@ -1,22 +1,13 @@
 #ifndef EVALLVM_H
 #define EVALLVM_H
+#include "llvm/IR/Constants.h"
 #include <cstddef>
-#include <llvm-14/llvm/BinaryFormat/Dwarf.h>
-#include <llvm-14/llvm/IR/Constant.h>
-#include <llvm-14/llvm/IR/Constants.h>
-#include <llvm-14/llvm/IR/Instructions.h>
-#include <llvm/IR/BasicBlock.h>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/GlobalVariable.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Type.h>
-#include <llvm/IR/Value.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/Support/Alignment.h>
-#include <llvm/Support/Casting.h>
+#include <llvm-14/llvm/IR/GlobalVariable.h>
+#include <llvm-14/llvm/IR/IRBuilder.h>
+#include <llvm-14/llvm/IR/IRBuilderFolder.h>
+#include <llvm-14/llvm/IR/LegacyPassManager.h>
+#include <llvm-14/llvm/IR/Type.h>
+#include <llvm-14/llvm/IR/Value.h>
 #include <map>
 #include <memory>
 #include <regex>
@@ -74,18 +65,6 @@ private:
     void setupTargetTriple();                          // setup target triple
     void setupExternFunctions();                       //define external functions from libc++
 
-    size_t getMethodIndex(llvm::StructType *cls, const std::string &methodName) {
-        auto methods = &classMap_[cls->getName().data()].methodsMap;
-        auto it = methods->find(methodName);
-        return std::distance(methods->begin(), it);
-    }
-
-    size_t getFieldIndex(llvm::StructType *cls, const std::string &fieldName) {
-        auto fields = &classMap_[cls->getName().data()].fieldsMap;
-        auto it = fields->find(fieldName);
-        return std::distance(fields->begin(), it) + RESERVED_FILED_COUNT;
-    }
-
     /*create global variable*/
     llvm::GlobalVariable *createGlobalVar(const std::string &name, llvm::Constant *init);
 
@@ -105,6 +84,9 @@ private:
 
     // (def square ((x number)) -> number (* x x))
     llvm::Value *compileFunction(const Exp &fnExp, std::string fnName, Env env);
+
+    // (list a (1 2 3))
+    llvm::Value *createList(const Exp &exp, const std::string &name, int size, Env env);
 
     // create instance
     llvm::Value *createInstance(const Exp &exp, Env env, const std::string &varName);
@@ -127,6 +109,18 @@ private:
     void buildClassBody(llvm::StructType *cls);
 
     void buildVTable(llvm::StructType *cls, ClassInfo *classInfo);
+
+    size_t getMethodIndex(llvm::StructType *cls, const std::string &methodName) {
+        auto methods = &classMap_[cls->getName().data()].methodsMap;
+        auto it = methods->find(methodName);
+        return std::distance(methods->begin(), it);
+    }
+
+    size_t getFieldIndex(llvm::StructType *cls, const std::string &fieldName) {
+        auto fields = &classMap_[cls->getName().data()].fieldsMap;
+        auto it = fields->find(fieldName);
+        return std::distance(fields->begin(), it) + RESERVED_FILED_COUNT;
+    }
 
     bool isTaggedList(const Exp &exp, const std::string &tag) {
         return exp.type == ExpType::LIST && exp.list[0].type == ExpType::SYMBOL && exp.list[0].string == tag;
@@ -195,15 +189,17 @@ private:
     }
 
 private:
-    Env globalEnv;                                 // global environment (symbol table)
-    std::unique_ptr<syntax::EvaParser> parser;     // define the parser
-    llvm::Function *fn;                            // current compiling function
-    std::unique_ptr<llvm::LLVMContext> ctx;        // container for modules and other LLVM objects
-    std::unique_ptr<llvm::Module> module;          // container for functions and global variables
-    std::unique_ptr<llvm::IRBuilder<>> builder;    // helps to generate IR
-    std::unique_ptr<llvm::IRBuilder<>> varsBuilder;// helps to generate IR
-    llvm::StructType *cls = nullptr;               // current compiling class type
-    std::map<std::string, ClassInfo> classMap_;    // class map
+    Env globalEnv;                                         // global environment (symbol table)
+    std::unique_ptr<syntax::EvaParser> parser;             // define the parser
+    llvm::Function *fn;                                    // current compiling function
+    std::unique_ptr<llvm::LLVMContext> ctx;                // container for modules and other LLVM objects
+    std::unique_ptr<llvm::Module> module;                  // container for functions and global variables
+    std::unique_ptr<llvm::IRBuilder<>> builder;            // helps to generate IR
+    std::unique_ptr<llvm::IRBuilder<>> varsBuilder;        // helps to generate IR
+    llvm::StructType *cls = nullptr;                       // current compiling class type
+    std::map<std::string, ClassInfo> classMap_;            // class map
+                                                           // optimization
+    std::unique_ptr<llvm::legacy::FunctionPassManager> fpm;// function pass manager
 };
 
 #endif

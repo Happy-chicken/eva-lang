@@ -1,5 +1,20 @@
 #include "../include/EvaIRGener.h"
-
+#include <llvm-14/llvm/IR/Constant.h>
+#include <llvm-14/llvm/IR/DerivedTypes.h>
+#include <llvm-14/llvm/IR/Function.h>
+#include <llvm-14/llvm/IR/GlobalVariable.h>
+#include <llvm-14/llvm/IR/Instructions.h>
+#include <llvm-14/llvm/IR/LegacyPassManager.h>
+#include <llvm-14/llvm/IR/Type.h>
+#include <llvm-14/llvm/IR/Value.h>
+#include <llvm-14/llvm/IR/Verifier.h>
+#include <llvm-14/llvm/Support/Casting.h>
+#include <llvm-14/llvm/Support/TargetSelect.h>
+#include <llvm-14/llvm/Support/raw_ostream.h>
+#include <llvm-14/llvm/Target/TargetMachine.h>
+#include <llvm-14/llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm-14/llvm/Transforms/Scalar.h>
+#include <llvm-14/llvm/Transforms/Scalar/GVN.h>
 void EvaLLVM::exec(const std::string &program)// run the program
 {
     // 1. parse the program
@@ -7,7 +22,7 @@ void EvaLLVM::exec(const std::string &program)// run the program
     // 2. generate the LLVM IR
     compile(ast);
     // print the generated IR
-    module->print(llvm::outs(), nullptr);
+    // module->print(llvm::outs(), nullptr);
     // 3. save module to file
     saveModuleToFile("./output.ll");
 }
@@ -166,7 +181,6 @@ llvm::Value *EvaLLVM::gen(const Exp &exp, Env env) {
                 // variable decalration: (var x (+ y 10))
                 // (var (x number) 10)
                 if (op == "var") {
-
                     // special case for class fields,
                     // which are already defined in class info allocation
                     if (cls != nullptr) {
@@ -222,7 +236,6 @@ llvm::Value *EvaLLVM::gen(const Exp &exp, Env env) {
                     }
                     return blockRes;
                 }
-
                 // extern function call
                 else if (op == "print") {
                     // call printf
@@ -233,6 +246,32 @@ llvm::Value *EvaLLVM::gen(const Exp &exp, Env env) {
                         args.push_back(gen(exp.list[i], env));
                     }
                     return builder->CreateCall(printfFn, args);
+                }
+                // (list <name> <body>)
+                // (list a (1 2 3))
+                else if (op == "list") {
+                    auto listName = exp.list[1].string;
+                    auto shape = exp.list[2].list.size();
+                    auto body = exp.list[2];
+
+                    // create a new list
+                    auto list = createList(body, listName, shape, env);
+                    env->define(listName, list);
+
+                    return list;
+                }
+                // (get <name> <index>)
+                // (get a 1)
+                else if (op == "get") {
+                    auto listName = exp.list[1].string;
+                    auto index = gen(exp.list[2], env);
+
+                    auto list = env->lookup(listName);
+
+                    auto elementType = list->getType()->getContainedType(0);
+                    // get the value from the list
+                    auto ptr = builder->CreateInBoundsGEP(elementType, list, {builder->getInt32(0), index});
+                    return builder->CreateLoad(elementType, ptr);
                 }
                 // (class <name> <super> <body>)
                 else if (op == "class") {
@@ -390,6 +429,18 @@ void EvaLLVM::moduleInit() {
     // create a new builder for the module
     builder = std::make_unique<llvm::IRBuilder<>>(*ctx);
     varsBuilder = std::make_unique<llvm::IRBuilder<>>(*ctx);
+    // optimization
+    fpm = std::make_unique<llvm::legacy::FunctionPassManager>(module.get());
+    // Do simple "peephole" optimizations and bit-twiddling optzns.
+    fpm->add(llvm::createInstructionCombiningPass());
+    // Reassociate expressions.
+    fpm->add(llvm::createReassociatePass());
+    // Eliminate Common SubExpressions.
+    fpm->add(llvm::createGVNPass());
+    // Simplify the control flow graph (deleting unreachable blocks, etc).
+    fpm->add(llvm::createCFGSimplificationPass());
+
+    fpm->doInitialization();
 }
 
 /*define external functions from libc++*/
@@ -516,7 +567,26 @@ llvm::Value *EvaLLVM::compileFunction(const Exp &fnExp, std::string fnName, Env 
     builder->SetInsertPoint(prevBlock);
     fn = prevFn;
 
+    // Validate the generated code, checking for consistency.
+    verifyFunction(*newFn);
+    // Run the optimizer on the function.
+    fpm->run(*newFn);
+
     return newFn;
+}
+
+// create a list
+llvm::Value *EvaLLVM::createList(const Exp &exp, const std::string &name, int size, Env env) {
+    auto listType = llvm::ArrayType::get(builder->getInt32Ty(), size);
+    auto list = builder->CreateAlloca(listType, 0, name);
+
+    for (auto i = 0; i < size; i++) {
+        auto value = gen(exp.list[i], env);
+        auto ptr = builder->CreateStructGEP(listType, list, i);
+        builder->CreateStore(value, ptr);
+    }
+
+    return list;
 }
 
 // create instance

@@ -35,7 +35,16 @@ add_executable(EvaLang main.cpp ${SOURCES})
 target_link_libraries(EvaLang ${GC_LIB})
 
 # Link the LLVM libraries
-llvm_map_components_to_libnames(LLVM_LIBS core support)
+llvm_map_components_to_libnames(LLVM_LIBS Analysis
+    Core
+    ExecutionEngine
+    InstCombine
+    Object
+    OrcJIT
+    RuntimeDyld
+    ScalarOpts
+    Support
+    native)
 target_link_libraries(EvaLang ${LLVM_LIBS})
 
 target_compile_options(EvaLang PRIVATE -fstandalone-debug)
