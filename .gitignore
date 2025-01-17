@@ -2,5 +2,4 @@
 .cache
 build
 output.ll
-run.sh
 eva
